@@ -1,0 +1,36 @@
+services:
+  mongodb:
+    image: mongo:7
+    ports: ["27017:27017"]
+    volumes:
+      - mongo_data:/data/db
+
+  search-grpc:
+    image: ghcr.io/tranduy1dol/kotoba-search-engine:latest
+    ports: ["50051:50051"]
+    environment:
+      INDEX_PATH: /data/index/index.bin
+      STOPWORD_PATH: /data/stopwords_vi.txt
+      SEARCH_PORT: "50051"
+    volumes:
+      - search_index:/data/index
+
+  backend:
+    image: ghcr.io/tranduy1dol/kotoba-core:latest
+    ports: ["8080:8080"]
+    environment:
+      MONGO_URI: mongodb://mongodb:27017/kotoba
+      SEARCH_GRPC_ADDR: search-grpc:50051
+    depends_on:
+      - mongodb
+      - search-grpc
+
+  frontend:
+    image: ghcr.io/tranduy1dol/kotoba-ui:latest
+    ports: ["3000:80"]
+    depends_on:
+      - backend
+
+volumes:
+  mongo_data:
+  search_index:

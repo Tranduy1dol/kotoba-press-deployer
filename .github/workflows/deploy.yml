@@ -1,0 +1,88 @@
+name: Deploy to Azure
+
+on:
+  repository_dispatch:
+    types: [image-updated]
+
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service to deploy"
+        required: true
+        type: choice
+        options:
+          - kotoba-search-engine
+          - kotoba-core
+          - kotoba-ui
+      tag:
+        description: "Image tag (default: latest)"
+        required: false
+        default: "latest"
+
+env:
+  RESOURCE_GROUP: kotoba-press-rg
+  REGISTRY: ghcr.io/tranduy1dol
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Determine service and tag
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            SERVICE="${{ github.event.client_payload.service }}"
+            TAG="${{ github.event.client_payload.tag }}"
+          else
+            SERVICE="${{ inputs.service }}"
+            TAG="${{ inputs.tag }}"
+          fi
+          echo "service=${SERVICE}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "Deploying ${SERVICE}:${TAG}"
+
+      - name: Login to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy kotoba-search-engine
+        if: steps.meta.outputs.service == 'kotoba-search-engine'
+        run: |
+          az containerapp update \
+            --name search-grpc \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.REGISTRY }}/kotoba-search-engine:${{ steps.meta.outputs.tag }} \
+            --set-env-vars \
+              INDEX_PATH=/data/index/index.bin \
+              STOPWORD_PATH=/data/stopwords_vi.txt \
+              SEARCH_PORT=50051
+
+      - name: Deploy kotoba-core
+        if: steps.meta.outputs.service == 'kotoba-core'
+        run: |
+          az containerapp update \
+            --name kotoba-core \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.REGISTRY }}/kotoba-core:${{ steps.meta.outputs.tag }} \
+            --set-env-vars \
+              MONGO_URI=secretref:mongo-uri \
+              REDIS_ADDR=secretref:redis-addr \
+              REDIS_PASSWORD=secretref:redis-password \
+              SEARCH_GRPC_ADDR=search-grpc:50051
+
+      - name: Deploy kotoba-ui
+        if: steps.meta.outputs.service == 'kotoba-ui'
+        run: |
+          az containerapp update \
+            --name kotoba-ui \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.REGISTRY }}/kotoba-ui:${{ steps.meta.outputs.tag }}
+
+      - name: Summary
+        run: |
+          echo "### Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Service:** ${{ steps.meta.outputs.service }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag:** ${{ steps.meta.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
